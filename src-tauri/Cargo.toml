@@ -1,0 +1,53 @@
+[package]
+name = "galley"
+version = "0.1.0"
+description = "Galley — a local Typst editor with live preview"
+authors = ["Francis Hage"]
+edition = "2021"
+repository = "https://github.com/francishage/galley"
+homepage = "https://github.com/francishage/galley"
+
+[lib]
+name = "galley_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+
+typst = "0.14"
+typst-svg = "0.14"
+typst-ide = "0.14"
+typst-pdf = "0.14"
+typst-render = "0.14"
+typst-html = "0.14"
+typst-kit = { version = "0.14", default-features = false, features = [
+    "embed-fonts",
+    "packages",
+] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+parking_lot = "0.12"
+rayon = "1"
+comemo = "0.4"
+
+# Build dependencies at full optimization even in dev mode. typst's hot paths
+# (compilation + SVG export) are unusable at opt-level 0, and we don't debug
+# them. Keep our own crate lightly optimized for fast incremental rebuilds.
+[profile.dev]
+opt-level = 1
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
