@@ -30,7 +30,7 @@
     "category": "Productivity",
     "shortDescription": "A local Typst editor with live preview.",
     "longDescription": "Galley is a fast, local-first editor for the Typst typesetting language. It compiles your document in the background and shows a live, page-by-page preview with syntax highlighting, autocomplete, and instant feedback.",
-    "homepage": "https://github.com/francishage/galley",
+    "homepage": "https://github.com/francishagecode/galley",
     "publisher": "Francis Hage",
     "icon": [
       "icons/32x32.png",

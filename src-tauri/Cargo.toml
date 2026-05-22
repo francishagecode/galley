@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "Galley — a local Typst editor with live preview"
 authors = ["Francis Hage"]
 edition = "2021"
-repository = "https://github.com/francishage/galley"
-homepage = "https://github.com/francishage/galley"
+repository = "https://github.com/francishagecode/galley"
+homepage = "https://github.com/francishagecode/galley"
 
 [lib]
 name = "galley_lib"

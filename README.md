@@ -11,7 +11,7 @@ browser engine doing the typesetting, no cloud round-trip.
 ## Install
 
 Download the latest release from the
-[Releases page](https://github.com/francishage/galley/releases).
+[Releases page](https://github.com/francishagecode/galley/releases).
 
 ### Linux
 

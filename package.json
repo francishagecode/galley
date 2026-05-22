@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "description": "Galley — a local Typst editor with live preview.",
   "author": "Francis Hage",
-  "homepage": "https://github.com/francishage/galley",
+  "homepage": "https://github.com/francishagecode/galley",
   "repository": {
     "type": "git",
-    "url": "https://github.com/francishage/galley.git"
+    "url": "https://github.com/francishagecode/galley.git"
   },
   "type": "module",
   "scripts": {
