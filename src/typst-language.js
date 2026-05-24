@@ -1,6 +1,6 @@
 import { StreamLanguage, HighlightStyle } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
-import { ViewPlugin, Decoration, EditorView } from "@codemirror/view";
+import { ViewPlugin, Decoration } from "@codemirror/view";
 import { RangeSetBuilder } from "@codemirror/state";
 
 // A pragmatic, line-by-line Typst tokenizer. Not a full grammar — just enough
@@ -95,7 +95,7 @@ const typstStream = {
     if (stream.peek() === "#") {
       stream.next();
       const kwMatch = stream.match(
-        /^(set|show|let|import|include|if|else|for|while|return|break|continue|context|none|auto|true|false)\b/
+        /^(set|show|let|import|include|if|else|for|while|return|break|continue|context|none|auto|true|false)\b/,
       );
       if (kwMatch) return "keyword";
       if (stream.match(/^[A-Za-z_][A-Za-z0-9_.]*/)) return "function";
@@ -106,14 +106,14 @@ const typstStream = {
     if (stream.peek() === "<") {
       const startPos = stream.pos;
       stream.next();
-      if (stream.match(/^[A-Za-z_][A-Za-z0-9_:.\-]*>/)) return "label";
+      if (stream.match(/^[A-Za-z_][A-Za-z0-9_:.-]*>/)) return "label";
       stream.pos = startPos + 1;
     }
 
     // Reference @name
     if (stream.peek() === "@") {
       stream.next();
-      if (stream.match(/^[A-Za-z_][A-Za-z0-9_:.\-]*/)) return "ref";
+      if (stream.match(/^[A-Za-z_][A-Za-z0-9_:.-]*/)) return "ref";
       return null;
     }
 
@@ -156,7 +156,7 @@ const typstStream = {
     }
 
     // URLs (auto-link): http(s)://...
-    if (stream.match(/^https?:\/\/[^\s\]\)]+/)) return "link";
+    if (stream.match(/^https?:\/\/[^\s\])]+/)) return "link";
 
     // Eat one char applying current inline state
     stream.next();
@@ -198,26 +198,26 @@ export const typstLanguage = StreamLanguage.define(typstStream);
 // Token classes — actual colors live in styles.css under each theme so a
 // single theme switch retints both the chrome and the editor.
 export const typstHighlightStyle = HighlightStyle.define([
-  { tag: t.heading,                 class: "tok-heading" },
-  { tag: t.list,                    class: "tok-list" },
-  { tag: t.strong,                  class: "tok-strong" },
-  { tag: t.emphasis,                class: "tok-emph" },
-  { tag: t.special(t.strong),       class: "tok-strong-mark" },
-  { tag: t.special(t.emphasis),     class: "tok-emph-mark" },
-  { tag: t.processingInstruction,   class: "tok-comment" },
-  { tag: t.monospace,               class: "tok-raw" },
-  { tag: t.string,                  class: "tok-string" },
-  { tag: t.comment,                 class: "tok-comment" },
-  { tag: t.function(t.variableName),class: "tok-function" },
-  { tag: t.keyword,                 class: "tok-keyword" },
-  { tag: t.labelName,               class: "tok-label" },
-  { tag: t.atom,                    class: "tok-atom" },
-  { tag: t.variableName,            class: "tok-variable" },
-  { tag: t.number,                  class: "tok-number" },
-  { tag: t.operator,                class: "tok-operator" },
-  { tag: t.special(t.string),       class: "tok-raw-delim" },
-  { tag: t.punctuation,             class: "tok-punct" },
-  { tag: t.link,                    class: "tok-link" },
+  { tag: t.heading, class: "tok-heading" },
+  { tag: t.list, class: "tok-list" },
+  { tag: t.strong, class: "tok-strong" },
+  { tag: t.emphasis, class: "tok-emph" },
+  { tag: t.special(t.strong), class: "tok-strong-mark" },
+  { tag: t.special(t.emphasis), class: "tok-emph-mark" },
+  { tag: t.processingInstruction, class: "tok-comment" },
+  { tag: t.monospace, class: "tok-raw" },
+  { tag: t.string, class: "tok-string" },
+  { tag: t.comment, class: "tok-comment" },
+  { tag: t.function(t.variableName), class: "tok-function" },
+  { tag: t.keyword, class: "tok-keyword" },
+  { tag: t.labelName, class: "tok-label" },
+  { tag: t.atom, class: "tok-atom" },
+  { tag: t.variableName, class: "tok-variable" },
+  { tag: t.number, class: "tok-number" },
+  { tag: t.operator, class: "tok-operator" },
+  { tag: t.special(t.string), class: "tok-raw-delim" },
+  { tag: t.punctuation, class: "tok-punct" },
+  { tag: t.link, class: "tok-link" },
 ]);
 
 // Line decorations: scale heading lines and tag list lines for indented look.
@@ -272,5 +272,5 @@ export const typstWysiwygPlugin = ViewPlugin.fromClass(
       }
     }
   },
-  { decorations: (v) => v.decorations }
+  { decorations: (v) => v.decorations },
 );

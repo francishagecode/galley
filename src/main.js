@@ -43,8 +43,8 @@ const SETTINGS_KEY = "galley.settings.v2";
 const THEMES = ["mariana", "monokai", "slate", "paper", "solar"];
 const DEFAULT_SETTINGS = {
   fontFamily: "ui-monospace, 'SF Mono', Menlo, monospace",
-  fontSize: 14,    // px
-  lineHeight: 16,  // tenths -> 1.6
+  fontSize: 14, // px
+  lineHeight: 16, // tenths -> 1.6
   tabSize: 2,
   theme: "mariana",
   lineNumbers: true,
@@ -77,16 +77,16 @@ const settings = loadSettings();
 
 const PROJECT_STATE_KEY = "galley.project.v1";
 
-let activePath = null;          // path of file currently in the editor view
-let dirty = false;              // dirty state of the active file
+let activePath = null; // path of file currently in the editor view
+let dirty = false; // dirty state of the active file
 let compileTimer = null;
 let compiling = false;
 let needsRecompile = false;
 
 const project = {
-  root: null,                   // project root directory, or null
-  files: [],                    // list of DirEntryInfo from backend
-  collapsed: new Set(),         // collapsed folder rel-paths in the tree
+  root: null, // project root directory, or null
+  files: [], // list of DirEntryInfo from backend
+  collapsed: new Set(), // collapsed folder rel-paths in the tree
 };
 
 // buffers map: path -> { state: EditorState, dirty: bool }
@@ -178,12 +178,10 @@ function handleEdit(update) {
   scheduleAutosave();
 }
 
-const view = createEditor(
-  document.getElementById("editor"),
-  DEFAULT_DOC,
-  handleEdit,
-  { lineNumbers: settings.lineNumbers, tabSize: settings.tabSize }
-);
+const view = createEditor(document.getElementById("editor"), DEFAULT_DOC, handleEdit, {
+  lineNumbers: settings.lineNumbers,
+  tabSize: settings.tabSize,
+});
 
 /* =====================================================================
    Settings → DOM
@@ -205,25 +203,16 @@ function reflectSettingsToControls() {
   document.getElementById("set-size").value = settings.fontSize;
   document.getElementById("set-size-val").textContent = settings.fontSize;
   document.getElementById("set-line").value = settings.lineHeight;
-  document.getElementById("set-line-val").textContent =
-    (settings.lineHeight / 10).toFixed(1);
+  document.getElementById("set-line-val").textContent = (settings.lineHeight / 10).toFixed(1);
   document.getElementById("set-tab").value = settings.tabSize;
   document.getElementById("set-tab-val").textContent = settings.tabSize;
 
   document.getElementById("set-theme").value = settings.theme;
-  document
-    .getElementById("set-linenums-on")
-    .classList.toggle("is-active", settings.lineNumbers);
-  document
-    .getElementById("set-linenums-off")
-    .classList.toggle("is-active", !settings.lineNumbers);
+  document.getElementById("set-linenums-on").classList.toggle("is-active", settings.lineNumbers);
+  document.getElementById("set-linenums-off").classList.toggle("is-active", !settings.lineNumbers);
 
-  document
-    .getElementById("set-autosave-on")
-    .classList.toggle("is-active", settings.autosave);
-  document
-    .getElementById("set-autosave-off")
-    .classList.toggle("is-active", !settings.autosave);
+  document.getElementById("set-autosave-on").classList.toggle("is-active", settings.autosave);
+  document.getElementById("set-autosave-off").classList.toggle("is-active", !settings.autosave);
   document.getElementById("set-autosave-delay").value = settings.autosaveDelay;
   document.getElementById("set-autosave-delay-val").textContent =
     `${(settings.autosaveDelay / 1000).toFixed(1)}s`;
@@ -248,8 +237,7 @@ document.getElementById("set-size").addEventListener("input", (e) => {
 
 document.getElementById("set-line").addEventListener("input", (e) => {
   settings.lineHeight = +e.target.value;
-  document.getElementById("set-line-val").textContent =
-    (settings.lineHeight / 10).toFixed(1);
+  document.getElementById("set-line-val").textContent = (settings.lineHeight / 10).toFixed(1);
   applySettings();
   saveSettings(settings);
 });
@@ -305,6 +293,7 @@ document.getElementById("set-autosave-delay").addEventListener("input", (e) => {
   // Don't reschedule mid-drag — the next edit (or release) picks up the new delay.
 });
 
+// eslint-disable-next-line prefer-const -- forward-declared above for mutual reference with toggleExport
 toggleSettings = makePopover(settingsPanel, settingsBtn, {
   otherClose: () => toggleExport?.(false),
 });
@@ -444,7 +433,7 @@ async function compile() {
     const t = result.timing;
     if (t) {
       console.log(
-        `compile: apply=${t.apply_ms}ms compile=${t.compile_ms}ms svg=${t.svg_ms}ms total=${t.total_ms}ms`
+        `compile: apply=${t.apply_ms}ms compile=${t.compile_ms}ms svg=${t.svg_ms}ms total=${t.total_ms}ms`,
       );
     }
     statusEl.textContent = `${fileName(cpath)}${mark} · ${pageCount} page${
@@ -542,7 +531,7 @@ function saveProjectState() {
           root: project.root,
           activePath,
           collapsed: Array.from(project.collapsed),
-        })
+        }),
       );
     } else {
       localStorage.removeItem(PROJECT_STATE_KEY);
@@ -564,13 +553,11 @@ function loadProjectState() {
 // well-known top-level names, then any .typ at the root, then any .typ anywhere.
 function pickInitialFile(files) {
   for (const candidate of ENTRY_FILE_CANDIDATES) {
-    const hit = files.find(
-      (f) => !f.is_dir && f.rel_path === candidate
-    );
+    const hit = files.find((f) => !f.is_dir && f.rel_path === candidate);
     if (hit) return hit.path;
   }
   const rootTyp = files.find(
-    (f) => !f.is_dir && !f.rel_path.includes("/") && f.rel_path.endsWith(".typ")
+    (f) => !f.is_dir && !f.rel_path.includes("/") && f.rel_path.endsWith(".typ"),
   );
   if (rootTyp) return rootTyp.path;
   const anyTyp = files.find((f) => !f.is_dir && f.rel_path.endsWith(".typ"));
@@ -628,9 +615,8 @@ async function openProjectAt(root, preferredActive = null, opts = {}) {
   if (!opts.keepCollapsed) project.collapsed.clear();
   activePath = null;
 
-  const target = preferredActive && files.some((f) => f.path === preferredActive)
-    ? preferredActive
-    : initial;
+  const target =
+    preferredActive && files.some((f) => f.path === preferredActive) ? preferredActive : initial;
   await loadFileIntoView(target, { isInitial: true });
 
   saveProjectState();
@@ -768,7 +754,7 @@ async function writeCurrent(path) {
 
 let autosaveTimer = null;
 const autosaveInFlight = new Set(); // paths currently being written
-const autosaveQueued = new Set();   // paths needing another pass after the current write
+const autosaveQueued = new Set(); // paths needing another pass after the current write
 
 function scheduleAutosave() {
   if (!settings.autosave) return;
@@ -858,9 +844,9 @@ document.getElementById("btn-new-file").addEventListener("click", newProjectFile
 
 const EXPORT_KEY = "galley.export.v1";
 const FORMAT_META = {
-  pdf:  { ext: "pdf",  label: "PDF",  perPage: false },
-  png:  { ext: "png",  label: "PNG",  perPage: true  },
-  svg:  { ext: "svg",  label: "SVG",  perPage: true  },
+  pdf: { ext: "pdf", label: "PDF", perPage: false },
+  png: { ext: "png", label: "PNG", perPage: true },
+  svg: { ext: "svg", label: "SVG", perPage: true },
   html: { ext: "html", label: "HTML", perPage: false },
 };
 
@@ -880,7 +866,9 @@ const exportNote = document.getElementById("export-note");
 const exportGo = document.getElementById("export-go");
 
 function persistExport() {
-  try { localStorage.setItem(EXPORT_KEY, JSON.stringify(exportState)); } catch {}
+  try {
+    localStorage.setItem(EXPORT_KEY, JSON.stringify(exportState));
+  } catch {}
 }
 
 function reflectExport() {
@@ -895,7 +883,8 @@ function reflectExport() {
     const example = "1".padStart(width, "0");
     exportNote.textContent = `${pageCount} pages — files will be numbered (e.g. name-${example}.${meta.ext}).`;
   } else if (exportState.format === "html") {
-    exportNote.textContent = "Recompiles in HTML mode — paged-only syntax (e.g. #pagebreak) may not work.";
+    exportNote.textContent =
+      "Recompiles in HTML mode — paged-only syntax (e.g. #pagebreak) may not work.";
   } else {
     exportNote.textContent = "";
   }
@@ -950,9 +939,8 @@ async function runExport() {
     });
     statusEl.classList.remove("working");
     const n = result.files.length;
-    const summary = n === 1
-      ? fileName(result.files[0])
-      : `${n} files (${fileName(result.files[0])} …)`;
+    const summary =
+      n === 1 ? fileName(result.files[0]) : `${n} files (${fileName(result.files[0])} …)`;
     updateStatus(`Exported ${meta.label}: ${summary}`);
     setTimeout(updateStatus, 2500);
   } catch (e) {
@@ -967,8 +955,7 @@ exportGo.addEventListener("click", runExport);
    Toolbar actions
    --------------------------------------------------------------------- */
 
-const bind = (id, fn) =>
-  document.getElementById(id).addEventListener("click", fn);
+const bind = (id, fn) => document.getElementById(id).addEventListener("click", fn);
 
 bind("btn-h1", () => prefixLines(view, "= "));
 bind("btn-h2", () => prefixLines(view, "== "));
@@ -987,10 +974,7 @@ bind("btn-math-block", () => insertSnippet(view, "\n$ $| $\n"));
 bind("btn-link", () => wrapSelection(view, '#link("https://")[', "]"));
 bind("btn-image", () => insertSnippet(view, '#image("$|")'));
 bind("btn-table", () =>
-  insertSnippet(
-    view,
-    "\n#table(\n  columns: 2,\n  [*Header 1*], [*Header 2*],\n  [$|], [],\n)\n"
-  )
+  insertSnippet(view, "\n#table(\n  columns: 2,\n  [*Header 1*], [*Header 2*],\n  [$|], [],\n)\n"),
 );
 bind("btn-hr", () => insertSnippet(view, "\n#line(length: 100%)\n"));
 
@@ -1020,9 +1004,7 @@ let resizeStartW = 0;
 resizerEl.addEventListener("pointerdown", (e) => {
   resizing = true;
   resizeStartX = e.clientX;
-  resizeStartW = document
-    .querySelector(".editor-pane")
-    .getBoundingClientRect().width;
+  resizeStartW = document.querySelector(".editor-pane").getBoundingClientRect().width;
   resizerEl.classList.add("dragging");
   resizerEl.setPointerCapture(e.pointerId);
 });
@@ -1067,15 +1049,9 @@ function setZoom(p) {
   applyZoom();
 }
 
-document
-  .getElementById("btn-zoom-in")
-  .addEventListener("click", () => setZoom(zoomPercent + 10));
-document
-  .getElementById("btn-zoom-out")
-  .addEventListener("click", () => setZoom(zoomPercent - 10));
-document
-  .getElementById("btn-zoom-reset")
-  .addEventListener("click", () => setZoom(100));
+document.getElementById("btn-zoom-in").addEventListener("click", () => setZoom(zoomPercent + 10));
+document.getElementById("btn-zoom-out").addEventListener("click", () => setZoom(zoomPercent - 10));
+document.getElementById("btn-zoom-reset").addEventListener("click", () => setZoom(100));
 document.getElementById("btn-zoom-fit").addEventListener("click", () => {
   const avail = previewScrollEl.clientWidth - 40;
   if (avail > 0) setZoom((avail / BASE_PAGE_WIDTH) * 100);

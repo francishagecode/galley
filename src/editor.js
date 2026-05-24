@@ -8,12 +8,7 @@ import {
   drawSelection,
   rectangularSelection,
 } from "@codemirror/view";
-import {
-  defaultKeymap,
-  history,
-  historyKeymap,
-  indentWithTab,
-} from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import {
   bracketMatching,
   indentOnInput,
@@ -28,11 +23,7 @@ import {
 } from "@codemirror/autocomplete";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { typstCompletions } from "./typst-complete.js";
-import {
-  typstLanguage,
-  typstHighlightStyle,
-  typstWysiwygPlugin,
-} from "./typst-language.js";
+import { typstLanguage, typstHighlightStyle, typstWysiwygPlugin } from "./typst-language.js";
 
 // Compartments let us swap individual extensions at runtime (e.g. toggling
 // line numbers, changing tab size) without rebuilding the whole state.
@@ -72,10 +63,9 @@ const themedEditor = EditorView.theme(
       borderLeftColor: "var(--accent)",
       borderLeftWidth: "2px",
     },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection":
-      {
-        backgroundColor: "var(--accent-3) !important",
-      },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
+      backgroundColor: "var(--accent-3) !important",
+    },
     ".cm-matchingBracket, .cm-nonmatchingBracket": {
       backgroundColor: "var(--accent-2)",
       outline: "1px solid var(--accent)",
@@ -214,7 +204,7 @@ const themedEditor = EditorView.theme(
       color: "var(--fg)",
     },
   },
-  { dark: true }
+  { dark: true },
 );
 
 function buildExtensions(onChange, opts) {
@@ -230,10 +220,7 @@ function buildExtensions(onChange, opts) {
     bracketMatching(),
     closeBrackets(),
     indentOnInput(),
-    tabSizeCompartment.of([
-      EditorState.tabSize.of(tabSize),
-      indentUnit.of(" ".repeat(tabSize)),
-    ]),
+    tabSizeCompartment.of([EditorState.tabSize.of(tabSize), indentUnit.of(" ".repeat(tabSize))]),
     typstLanguage,
     typstWysiwygPlugin,
     syntaxHighlighting(typstHighlightStyle),
@@ -295,11 +282,8 @@ export function wrapSelection(view, prefix, suffix) {
         { from: range.from, insert: prefix },
         { from: range.to, insert: suffix },
       ],
-      range: EditorSelection.range(
-        range.from + prefix.length,
-        range.to + prefix.length
-      ),
-    }))
+      range: EditorSelection.range(range.from + prefix.length, range.to + prefix.length),
+    })),
   );
   view.focus();
 }
@@ -329,9 +313,7 @@ export function insertSnippet(view, snippet) {
   const { from, to } = view.state.selection.main;
   view.dispatch({
     changes: { from, to, insert: text },
-    selection: EditorSelection.cursor(
-      from + (cursorIdx === -1 ? text.length : cursorIdx)
-    ),
+    selection: EditorSelection.cursor(from + (cursorIdx === -1 ? text.length : cursorIdx)),
   });
   view.focus();
 }
