@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { invoke, onOpenRequest, open, pageImageUrl, save, takeLaunchTarget } from "./platform.js";
 import { ChangeSet } from "@codemirror/state";
 import {
   createEditor,
@@ -94,7 +93,6 @@ const project = {
 // per-file undo history and cursor position.
 const buffers = new Map();
 
-const pageCache = new Map();
 let pageHashByIndex = [];
 
 const syncByFile = new Map();
@@ -324,7 +322,16 @@ function setError(message) {
   statusEl.classList.add("error");
 }
 
+// Live compiling hits half-typed markup constantly, so only surface a compile
+// error once it persists. The last good preview stays up in the meantime.
+let compileErrorTimer = null;
+function showCompileError(message) {
+  clearTimeout(compileErrorTimer);
+  compileErrorTimer = setTimeout(() => setError(message), 400);
+}
+
 function clearError() {
+  clearTimeout(compileErrorTimer);
   errorBoxEl.hidden = true;
   errorBoxEl.textContent = "";
   statusEl.classList.remove("error");
@@ -334,9 +341,15 @@ function clearError() {
    Compile pipeline
    --------------------------------------------------------------------- */
 
+// Compile as soon as possible rather than after a typing pause, so the preview
+// keeps up while typing. Edits that land mid-compile are folded into a single
+// follow-up run by triggerCompile(); the short delay batches keystroke bursts.
 function scheduleCompile() {
-  if (compileTimer) clearTimeout(compileTimer);
-  compileTimer = setTimeout(triggerCompile, 180);
+  if (compileTimer) return;
+  compileTimer = setTimeout(() => {
+    compileTimer = null;
+    triggerCompile();
+  }, 16);
 }
 
 async function triggerCompile() {
@@ -373,7 +386,6 @@ async function invokeCompile(args) {
 async function compile() {
   const cpath = activePath;
   const sync = getSyncState();
-  const knownHashes = Array.from(pageCache.keys());
   const usePatchFlow = sync.hash !== null;
   const projectRoot = project.root;
   let result;
@@ -387,7 +399,6 @@ async function compile() {
         projectRoot,
         patches: changeSetToPatches(patchesToSend),
         baseHash: sync.hash,
-        knownHashes,
       });
     } catch (e) {
       setError(String(e));
@@ -400,7 +411,6 @@ async function compile() {
           filePath: cpath,
           projectRoot,
           fullSource: getDocText(view),
-          knownHashes,
         });
       } catch (e) {
         setError(String(e));
@@ -415,7 +425,6 @@ async function compile() {
         filePath: cpath,
         projectRoot,
         fullSource: source,
-        knownHashes,
       });
     } catch (e) {
       setError(String(e));
@@ -431,30 +440,48 @@ async function compile() {
     const pageCount = result.pages.length;
     const mark = dirty ? " ●" : "";
     const t = result.timing;
-    if (t) {
+    if (import.meta.env.DEV && t) {
       console.log(
-        `compile: apply=${t.apply_ms}ms compile=${t.compile_ms}ms svg=${t.svg_ms}ms total=${t.total_ms}ms`,
+        `compile: apply=${t.apply_ms}ms compile=${t.compile_ms}ms pages=${t.pages_ms}ms total=${t.total_ms}ms`,
       );
     }
     statusEl.textContent = `${fileName(cpath)}${mark} · ${pageCount} page${
       pageCount === 1 ? "" : "s"
     } · ${t ? t.total_ms : "?"}ms`;
   } else {
-    setError(result.error || "Unknown compile error");
+    showCompileError(result.error || "Unknown compile error");
   }
 }
 
-function svgToFragment(slot, svg) {
-  const range = document.createRange();
-  range.selectNodeContents(slot);
-  return range.createContextualFragment(svg);
+// Pages are shown as PNGs rasterized by the engine (the `galley-page:`
+// protocol) at the exact device-pixel width they're displayed at. The browser
+// decodes those off its main thread and scrolling just moves pixels; inline or
+// <img> SVG instead meant parsing, styling and painting thousands of glyph
+// elements on the main thread, which stalled typing and scrolling.
+function pageImageWidth() {
+  return Math.round(BASE_PAGE_WIDTH * (zoomPercent / 100) * devicePixelRatio);
+}
+
+function setPageImage(slot, hash) {
+  const url = pageImageUrl(`${hash}-${pageImageWidth()}.png`);
+  if (slot.dataset.pendingUrl === url) return;
+  slot.dataset.pendingUrl = url;
+  const img = new Image();
+  img.alt = "";
+  img.draggable = false;
+  img.src = url;
+  // Swap only once decoded so edits never flash an empty page; a newer request
+  // for the same slot wins over a slower, older one. On failure (the page was
+  // superseded by a newer compile) the current image stays.
+  img.decode().then(
+    () => {
+      if (slot.dataset.pendingUrl === url) slot.replaceChildren(img);
+    },
+    () => {},
+  );
 }
 
 function renderPages(pages) {
-  for (const { hash, svg } of pages) {
-    if (svg != null) pageCache.set(hash, svg);
-  }
-
   while (previewEl.children.length > pages.length) {
     previewEl.lastChild.remove();
   }
@@ -464,43 +491,46 @@ function renderPages(pages) {
     previewEl.appendChild(div);
   }
 
-  const updates = [];
   for (let i = 0; i < pages.length; i++) {
-    const hash = pages[i].hash;
-    if (pageHashByIndex[i] !== hash) {
-      const svg = pageCache.get(hash);
-      if (svg) updates.push({ i, svg });
-      pageHashByIndex[i] = hash;
-    }
+    const { hash, width_pt, height_pt } = pages[i];
+    if (pageHashByIndex[i] === hash) continue;
+    pageHashByIndex[i] = hash;
+    const slot = previewEl.children[i];
+    // Page size in pt, for click-to-jump and to reserve the page's height
+    // before its image arrives.
+    slot.dataset.vbWidth = width_pt;
+    slot.dataset.vbHeight = height_pt;
+    slot.style.aspectRatio = `${width_pt} / ${height_pt}`;
+    slot.dataset.hash = hash;
+    setPageImage(slot, hash);
   }
   pageHashByIndex.length = pages.length;
-
-  if (updates.length <= 2) {
-    for (const { i, svg } of updates) {
-      const slot = previewEl.children[i];
-      slot.replaceChildren(svgToFragment(slot, svg));
-    }
-  } else {
-    const PER_FRAME = 2;
-    let cursor = 0;
-    const step = () => {
-      const end = Math.min(cursor + PER_FRAME, updates.length);
-      for (let k = cursor; k < end; k++) {
-        const { i, svg } = updates[k];
-        const slot = previewEl.children[i];
-        if (slot) slot.replaceChildren(svgToFragment(slot, svg));
-      }
-      cursor = end;
-      if (cursor < updates.length) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }
-
-  const live = new Set(pages.map((p) => p.hash));
-  for (const h of pageCache.keys()) {
-    if (!live.has(h)) pageCache.delete(h);
-  }
 }
+
+// Re-rasterize every page at the current zoom and pixel ratio. Until the new
+// images arrive the old ones are scaled by CSS, so zooming stays responsive.
+let pageImagesTimer = null;
+function refreshPageImages() {
+  clearTimeout(pageImagesTimer);
+  pageImagesTimer = setTimeout(() => {
+    for (const slot of previewEl.children) {
+      if (slot.dataset.hash) setPageImage(slot, slot.dataset.hash);
+    }
+  }, 120);
+}
+
+// Moving the window to a screen with a different scale changes the pixel
+// ratio; re-rasterize so pages stay sharp.
+(function watchPixelRatio() {
+  matchMedia(`(resolution: ${devicePixelRatio}dppx)`).addEventListener(
+    "change",
+    () => {
+      refreshPageImages();
+      watchPixelRatio();
+    },
+    { once: true },
+  );
+})();
 
 /* =====================================================================
    File ops + project mode
@@ -517,7 +547,6 @@ function closeProject() {
   buffers.clear();
   syncByFile.clear();
   pageHashByIndex = [];
-  pageCache.clear();
   previewEl.innerHTML = "";
   saveProjectState();
 }
@@ -607,7 +636,6 @@ async function openProjectAt(root, preferredActive = null, opts = {}) {
   buffers.clear();
   syncByFile.clear();
   pageHashByIndex = [];
-  pageCache.clear();
   previewEl.innerHTML = "";
 
   project.root = root;
@@ -689,7 +717,6 @@ async function openFile() {
     activePath = path;
     dirty = false;
     pageHashByIndex = [];
-    pageCache.clear();
     previewEl.innerHTML = "";
     syncByFile.set(syncKey(), {
       hash: null,
@@ -1042,6 +1069,7 @@ function applyZoom() {
   const w = BASE_PAGE_WIDTH * (zoomPercent / 100);
   previewEl.style.setProperty("--page-width", `${w}px`);
   zoomLevelEl.textContent = `${Math.round(zoomPercent)}%`;
+  refreshPageImages();
 }
 
 function setZoom(p) {
@@ -1107,16 +1135,15 @@ window.addEventListener("keydown", (e) => {
 previewEl.addEventListener("click", async (e) => {
   const pageEl = e.target.closest(".page");
   if (!pageEl) return;
-  const svg = pageEl.querySelector("svg");
-  if (!svg) return;
+  const vbWidth = Number(pageEl.dataset.vbWidth);
+  const vbHeight = Number(pageEl.dataset.vbHeight);
+  if (!vbWidth || !vbHeight) return;
 
-  const rect = svg.getBoundingClientRect();
+  const rect = (pageEl.querySelector("img") || pageEl).getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return;
-  const vb = svg.viewBox && svg.viewBox.baseVal;
-  if (!vb || vb.width === 0 || vb.height === 0) return;
 
-  const xPt = ((e.clientX - rect.left) / rect.width) * vb.width;
-  const yPt = ((e.clientY - rect.top) / rect.height) * vb.height;
+  const xPt = ((e.clientX - rect.left) / rect.width) * vbWidth;
+  const yPt = ((e.clientY - rect.top) / rect.height) * vbHeight;
 
   const pageIndex = Array.prototype.indexOf.call(previewEl.children, pageEl);
   if (pageIndex < 0) return;
@@ -1378,6 +1405,12 @@ applyZoom();
 renderFileTree();
 
 (async function boot() {
+  onOpenRequest(({ root, file }) => openProjectAt(root, file));
+  const launch = await takeLaunchTarget();
+  if (launch) {
+    await openProjectAt(launch.root, launch.file);
+    return;
+  }
   const saved = loadProjectState();
   if (saved && saved.root) {
     project.collapsed = new Set(saved.collapsed || []);
@@ -1388,3 +1421,5 @@ renderFileTree();
   renderOutline();
   triggerCompile();
 })();
+
+if (import.meta.env.DEV) import("./bench.js");
