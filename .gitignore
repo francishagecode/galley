@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Rust build output (Cargo workspace)
+/target/
+
+# Electron native module build output
+native/*.node
+release

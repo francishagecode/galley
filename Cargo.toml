@@ -1,0 +1,21 @@
+[workspace]
+members = ["engine", "native"]
+resolver = "2"
+
+# Build dependencies at full optimization even in dev mode. typst's hot paths
+# (compilation + rendering) are unusable at opt-level 0, and we don't debug
+# them. Keep our own crates lightly optimized for fast incremental rebuilds.
+[profile.dev]
+opt-level = 1
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

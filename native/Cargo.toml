@@ -1,0 +1,17 @@
+[package]
+name = "galley-native"
+version = "0.1.0"
+description = "Node native module exposing Galley's Typst engine to the Electron shell"
+authors = ["Francis Hage"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+galley-engine = { path = "../engine" }
+napi = { version = "3", features = ["napi4"] }
+napi-derive = "3"
+
+[build-dependencies]
+napi-build = "2"

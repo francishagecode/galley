@@ -1,0 +1,46 @@
+# Packaging for `npm run dist` (electron-builder). Output lands in release/.
+appId: com.francishage.galley
+productName: Galley
+copyright: Copyright © 2026 Francis Hage
+
+directories:
+  output: release
+  buildResources: build
+
+# The renderer is fully bundled by Vite, so the app ships no node_modules.
+files:
+  - package.json
+  - electron/**
+  - dist/**
+  - "!dist/**/*.map"
+  - native/galley.node
+  - build/icon.png
+
+# Native modules can't be loaded from inside the asar archive.
+asarUnpack:
+  - native/galley.node
+
+# Lock down runtime switches the app never needs.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  onlyLoadAppFromAsar: true
+  enableEmbeddedAsarIntegrityValidation: true
+  grantFileProtocolExtraPrivileges: false
+
+linux:
+  executableName: galley
+  maintainer: Francis Hage
+  category: Office
+  synopsis: A local Typst editor with live preview
+  target:
+    - AppImage
+    - deb
+
+mac:
+  category: public.app-category.productivity
+  target: dmg
+
+win:
+  target: nsis

@@ -1212,8 +1212,13 @@ body.sidebar-hidden .sidebar {
   border-radius: 2px;
   width: var(--page-width, 720px);
   max-width: none;
-  content-visibility: auto;
-  contain-intrinsic-size: auto var(--page-width, 720px) auto calc(var(--page-width, 720px) * 1.294);
+  /* Centres the page, but unlike align-items: center it falls back to the
+     left edge when the page is wider than the pane, so it stays scrollable. */
+  margin-inline: auto;
+  /* Placeholder until setPageSvg() sets the real ratio from the viewBox. No
+     content-visibility: auto here: re-rendering pages as they scroll back
+     into view was the main source of scroll jank. */
+  aspect-ratio: 1 / 1.294;
   contain: layout style paint;
   transition: box-shadow 0.2s ease;
 }
@@ -1224,10 +1229,11 @@ body.sidebar-hidden .sidebar {
   border: 1px solid var(--border);
 }
 
-.preview .page svg {
+.preview .page img {
   display: block;
   width: 100%;
   height: auto;
+  user-select: none;
 }
 
 .error-box {

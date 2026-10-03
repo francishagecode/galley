@@ -28,11 +28,8 @@ impl SharedAssets {
         searcher.include_system_fonts(true);
         let fonts = searcher.search();
 
-        let packages = PackageStorage::new(
-            None,
-            None,
-            typst_kit::download::Downloader::new(user_agent),
-        );
+        let packages =
+            PackageStorage::new(None, None, typst_kit::download::Downloader::new(user_agent));
 
         Self {
             fonts_book: LazyHash::new(fonts.book),
@@ -158,13 +155,23 @@ impl World for EditorWorld {
 
     fn source(&self, id: FileId) -> FileResult<Source> {
         self.slot(id, |slot| {
-            slot.source(self.main, &self.main_source, &self.root, &self.assets.packages)
+            slot.source(
+                self.main,
+                &self.main_source,
+                &self.root,
+                &self.assets.packages,
+            )
         })
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
         self.slot(id, |slot| {
-            slot.file(self.main, &self.main_source, &self.root, &self.assets.packages)
+            slot.file(
+                self.main,
+                &self.main_source,
+                &self.root,
+                &self.assets.packages,
+            )
         })
     }
 
@@ -305,11 +312,7 @@ fn read(
     read_from_disk(&system_path(root, id, packages)?)
 }
 
-fn system_path(
-    project_root: &Path,
-    id: FileId,
-    packages: &PackageStorage,
-) -> FileResult<PathBuf> {
+fn system_path(project_root: &Path, id: FileId, packages: &PackageStorage) -> FileResult<PathBuf> {
     let buf;
     let mut root = project_root;
     if let Some(spec) = id.package() {
@@ -330,5 +333,7 @@ fn read_from_disk(path: &Path) -> FileResult<Vec<u8>> {
 }
 
 fn decode_utf8(buf: &[u8]) -> FileResult<&str> {
-    Ok(std::str::from_utf8(buf.strip_prefix(b"\xef\xbb\xbf").unwrap_or(buf))?)
+    Ok(std::str::from_utf8(
+        buf.strip_prefix(b"\xef\xbb\xbf").unwrap_or(buf),
+    )?)
 }
