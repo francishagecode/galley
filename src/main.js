@@ -482,34 +482,116 @@ function pageImageWidth() {
   return Math.round(BASE_PAGE_WIDTH * (zoomPercent / 100) * devicePixelRatio);
 }
 
-function setPageImage(slot, hash) {
-  const url = pageImageUrl(`${hash}-${pageImageWidth()}.png`);
-  if (slot.dataset.pendingUrl === url) return;
-  slot.dataset.pendingUrl = url;
+// Only pages on or near screen get an image, a few at a time and nearest
+// first. A long document can have hundreds of pages, and an edit that touches
+// all of them (a style change, say) would otherwise rasterize every one, and
+// the next compile, which shares the engine's threads, would wait behind them.
+// Pages far off screen let their images go; any page gets its current image
+// once it's scrolled to.
+const PAGE_LOADS = 3;
+const nearPages = new Set();
+let pageLoads = 0;
+
+const nearObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) nearPages.add(entry.target);
+      else nearPages.delete(entry.target);
+    }
+    loadPageImages();
+  },
+  { root: previewScrollEl, rootMargin: "100% 0px" },
+);
+
+const keepObserver = new IntersectionObserver(
+  (entries) => {
+    for (const entry of entries) if (!entry.isIntersecting) releasePageImage(entry.target);
+  },
+  { root: previewScrollEl, rootMargin: "400% 0px" },
+);
+
+const wantedImage = (slot) => pageImageUrl(`${slot.dataset.hash}-${pageImageWidth()}.png`);
+
+function needsImage(slot) {
+  if (!slot.dataset.hash || slot.dataset.loading) return false;
+  const url = wantedImage(slot);
+  return slot.dataset.shown !== url && slot.dataset.failed !== url;
+}
+
+// Starts on the pages nearest the middle of the preview, up to PAGE_LOADS at once.
+function loadPageImages() {
+  if (pageLoads >= PAGE_LOADS) return;
+  const view = previewScrollEl.getBoundingClientRect();
+  const distance = (slot) => {
+    const r = slot.getBoundingClientRect();
+    return Math.max(0, r.top - view.bottom, view.top - r.bottom);
+  };
+  const waiting = [...nearPages]
+    .filter(needsImage)
+    .map((slot) => [distance(slot), slot])
+    .sort((a, b) => a[0] - b[0]);
+  for (const [, slot] of waiting.slice(0, PAGE_LOADS - pageLoads)) loadPageImage(slot);
+}
+
+function loadPageImage(slot) {
+  const url = wantedImage(slot);
+  slot.dataset.loading = url;
+  pageLoads++;
   const img = new Image();
   img.alt = "";
   img.draggable = false;
   img.src = url;
-  // Swap only once decoded so edits never flash an empty page; a newer request
-  // for the same slot wins over a slower, older one. On failure (the page was
-  // superseded by a newer compile) the current image stays.
-  img.decode().then(
-    () => {
-      if (slot.dataset.pendingUrl === url) slot.replaceChildren(img);
-    },
-    () => {},
-  );
+  // Swap only once decoded so edits never flash an empty page. On failure (the
+  // page was superseded by a newer compile) the current image stays.
+  img
+    .decode()
+    .then(
+      () => {
+        if (slot.dataset.loading !== url) return; // let go of meanwhile
+        slot.replaceChildren(img);
+        slot.dataset.shown = url;
+      },
+      () => {
+        if (slot.dataset.loading === url) slot.dataset.failed = url;
+      },
+    )
+    .finally(() => {
+      if (slot.dataset.loading === url) delete slot.dataset.loading;
+      pageLoads--;
+      loadPageImages();
+    });
+}
+
+function releasePageImage(slot) {
+  if (!slot.dataset.shown && !slot.dataset.loading) return;
+  slot.replaceChildren();
+  delete slot.dataset.shown;
+  delete slot.dataset.loading;
+}
+
+function addPageSlot() {
+  const slot = document.createElement("div");
+  slot.className = "page";
+  previewEl.appendChild(slot);
+  nearObserver.observe(slot);
+  keepObserver.observe(slot);
+}
+
+function removePageSlot(slot) {
+  nearObserver.unobserve(slot);
+  keepObserver.unobserve(slot);
+  nearPages.delete(slot);
+  slot.remove();
+}
+
+function clearPreview() {
+  for (const slot of [...previewEl.children]) removePageSlot(slot);
+  pageHashByIndex = [];
 }
 
 function renderPages(pages) {
-  while (previewEl.children.length > pages.length) {
-    previewEl.lastChild.remove();
-  }
-  while (previewEl.children.length < pages.length) {
-    const div = document.createElement("div");
-    div.className = "page";
-    previewEl.appendChild(div);
-  }
+  while (previewEl.children.length > pages.length) removePageSlot(previewEl.lastChild);
+  while (previewEl.children.length < pages.length) addPageSlot();
 
   for (let i = 0; i < pages.length; i++) {
     const { hash, width_pt, height_pt } = pages[i];
@@ -522,21 +604,17 @@ function renderPages(pages) {
     slot.dataset.vbHeight = height_pt;
     slot.style.aspectRatio = `${width_pt} / ${height_pt}`;
     slot.dataset.hash = hash;
-    setPageImage(slot, hash);
   }
   pageHashByIndex.length = pages.length;
+  loadPageImages();
 }
 
-// Re-rasterize every page at the current zoom and pixel ratio. Until the new
-// images arrive the old ones are scaled by CSS, so zooming stays responsive.
+// The zoom or pixel ratio changed: pages on screen get images at the new size.
+// Until they arrive the old ones are scaled by CSS, so zooming stays responsive.
 let pageImagesTimer = null;
 function refreshPageImages() {
   clearTimeout(pageImagesTimer);
-  pageImagesTimer = setTimeout(() => {
-    for (const slot of previewEl.children) {
-      if (slot.dataset.hash) setPageImage(slot, slot.dataset.hash);
-    }
-  }, 120);
+  pageImagesTimer = setTimeout(loadPageImages, 120);
 }
 
 // Moving the window to a screen with a different scale changes the pixel
@@ -566,8 +644,7 @@ function closeProject() {
   project.collapsed.clear();
   buffers.clear();
   syncByFile.clear();
-  pageHashByIndex = [];
-  previewEl.innerHTML = "";
+  clearPreview();
   watch(null);
   saveProjectState();
 }
@@ -656,8 +733,7 @@ async function openProjectAt(root, preferredActive = null, opts = {}) {
   if (activePath && dirty) autosaveBuffer(activePath);
   buffers.clear();
   syncByFile.clear();
-  pageHashByIndex = [];
-  previewEl.innerHTML = "";
+  clearPreview();
 
   project.root = root;
   project.files = files;
@@ -740,8 +816,7 @@ async function openFile() {
     dirty = false;
     // A lone file's imports resolve from its folder, so that's what to watch.
     watch(dirName(path));
-    pageHashByIndex = [];
-    previewEl.innerHTML = "";
+    clearPreview();
     syncByFile.set(syncKey(), {
       hash: null,
       pending: ChangeSet.empty(view.state.doc.length),

@@ -111,7 +111,8 @@ async function waitForPages(timeout) {
     if (filled !== lastCount) {
       lastCount = filled;
       stableSince = performance.now();
-    } else if (filled > 0 && filled === pages.length && performance.now() - stableSince > 800) {
+    } else if (filled > 0 && performance.now() - stableSince > 800) {
+      // Only pages near the viewport get images, so wait for those to settle.
       return filled;
     }
     await sleep(100);
