@@ -2,7 +2,7 @@
 // with the Rust Typst engine (engine/, bound in native/) doing compiles and
 // page rendering off the main thread.
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, screen, shell } from "electron";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, watch, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -109,6 +109,113 @@ ipcMain.handle("galley:save", async (event, options = {}) => {
     { title: options.title, defaultPath: options.defaultPath, filters: options.filters },
   );
   return canceled ? null : filePath;
+});
+
+// A question with two buttons; true when the first (`confirm`) is chosen.
+ipcMain.handle("galley:ask", async (event, options) => {
+  const { response } = await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender), {
+    type: "question",
+    message: options.message,
+    detail: options.detail,
+    buttons: [options.confirm, options.cancel],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  return response === 0;
+});
+
+// --- Watching ---------------------------------------------------------------
+
+// Folders the engine's file listing skips, plus hidden files and the leftovers
+// other editors make while saving (`.main.typ.swp`, `main.typ~`, Vim's 4913).
+const UNWATCHED = new Set(["node_modules", "target", "dist", "build", "__pycache__", "4913"]);
+const ignored = (name) => name.startsWith(".") || name.endsWith("~") || UNWATCHED.has(name);
+const MAX_WATCH_DEPTH = 8;
+const MAX_WATCHED_DIRS = 1000;
+
+// Watches each folder under `root` on its own rather than with Node's recursive
+// mode, so skipped folders cost nothing. Calls `onChange(paths, restructured)`
+// once a burst of changes settles; `restructured` means files were added,
+// removed or renamed.
+function watchTree(root, onChange) {
+  const watchers = new Map();
+  let changed = new Set();
+  let restructured = false;
+  let timer = null;
+
+  function flush() {
+    const paths = [...changed];
+    const moved = restructured;
+    changed = new Set();
+    restructured = false;
+    onChange(paths, moved);
+  }
+
+  function unwatchDir(dir) {
+    for (const [watched, watcher] of watchers) {
+      if (watched === dir || watched.startsWith(dir + path.sep)) {
+        watcher.close();
+        watchers.delete(watched);
+      }
+    }
+  }
+
+  function watchDir(dir, depth) {
+    if (depth > MAX_WATCH_DEPTH || watchers.size >= MAX_WATCHED_DIRS) return;
+    let watcher;
+    try {
+      watcher = watch(dir, (type, name) => {
+        if (!name || ignored(name)) return;
+        const file = path.join(dir, name);
+        if (type === "rename") {
+          restructured = true;
+          // A folder that appeared (or was replaced) needs a fresh watch; one
+          // that's gone needs none.
+          unwatchDir(file);
+          try {
+            if (statSync(file).isDirectory()) watchDir(file, depth + 1);
+          } catch {}
+        }
+        changed.add(file);
+        clearTimeout(timer);
+        timer = setTimeout(flush, 100);
+      });
+    } catch {
+      return;
+    }
+    watcher.on("error", () => unwatchDir(dir));
+    watchers.set(dir, watcher);
+    let entries = [];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {}
+    for (const entry of entries) {
+      if (entry.isDirectory() && !ignored(entry.name)) {
+        watchDir(path.join(dir, entry.name), depth + 1);
+      }
+    }
+  }
+
+  watchDir(root, 0);
+  return {
+    close() {
+      clearTimeout(timer);
+      unwatchDir(root);
+    },
+  };
+}
+
+// The window watches the folder it has open, so edits made outside Galley (in
+// another editor, by git, by a script) reach it. Null stops watching.
+let projectWatcher = null;
+ipcMain.handle("galley:watch", (event, root) => {
+  projectWatcher?.close();
+  projectWatcher = null;
+  if (!root) return;
+  const sender = event.sender;
+  projectWatcher = watchTree(root, (paths, restructured) => {
+    if (!sender.isDestroyed()) sender.send("galley:files-changed", { paths, restructured });
+  });
 });
 
 // --- Protocols --------------------------------------------------------------

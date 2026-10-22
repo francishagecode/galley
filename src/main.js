@@ -1,5 +1,15 @@
-import { invoke, onOpenRequest, open, pageImageUrl, save, takeLaunchTarget } from "./platform.js";
-import { ChangeSet } from "@codemirror/state";
+import {
+  ask,
+  invoke,
+  onFilesChanged,
+  onOpenRequest,
+  open,
+  pageImageUrl,
+  save,
+  takeLaunchTarget,
+  watch,
+} from "./platform.js";
+import { Annotation, ChangeSet } from "@codemirror/state";
 import {
   createEditor,
   createEditorState,
@@ -88,9 +98,10 @@ const project = {
   collapsed: new Set(), // collapsed folder rel-paths in the tree
 };
 
-// buffers map: path -> { state: EditorState, dirty: bool }
+// buffers map: path -> { state: EditorState, dirty: bool, diskText: string }
 // We keep each file's CodeMirror state around so switching files preserves
-// per-file undo history and cursor position.
+// per-file undo history and cursor position. `diskText` is the file's content
+// as Galley last read or wrote it, which tells outside edits from our own saves.
 const buffers = new Map();
 
 let pageHashByIndex = [];
@@ -158,12 +169,17 @@ let toggleSettings, toggleExport;
    Editor
    --------------------------------------------------------------------- */
 
+// Marks the edit that loads a file's new content from disk, which leaves the
+// buffer saved rather than dirty.
+const fromDisk = Annotation.define();
+
 // Module-level handler that all per-buffer states share, since `view.setState`
 // swaps CodeMirror state when the user clicks a different file in the tree.
 function handleEdit(update) {
-  dirty = true;
-  if (activePath) {
-    const buf = buffers.get(activePath);
+  const reload = update.transactions.some((tr) => tr.annotation(fromDisk));
+  if (!reload) {
+    dirty = true;
+    const buf = activePath && buffers.get(activePath);
     if (buf) buf.dirty = true;
   }
   if (update.changes) {
@@ -173,7 +189,7 @@ function handleEdit(update) {
   updateStatus();
   scheduleCompile();
   scheduleOutline();
-  scheduleAutosave();
+  if (!reload) scheduleAutosave();
 }
 
 const view = createEditor(document.getElementById("editor"), DEFAULT_DOC, handleEdit, {
@@ -303,6 +319,10 @@ toggleSettings = makePopover(settingsPanel, settingsBtn, {
 function fileName(p) {
   if (!p) return "Untitled";
   return p.split(/[\\/]/).pop();
+}
+
+function dirName(p) {
+  return p.replace(/[\\/][^\\/]*$/, "") || "/";
 }
 
 function updateStatus(extra) {
@@ -548,6 +568,7 @@ function closeProject() {
   syncByFile.clear();
   pageHashByIndex = [];
   previewEl.innerHTML = "";
+  watch(null);
   saveProjectState();
 }
 
@@ -642,6 +663,7 @@ async function openProjectAt(root, preferredActive = null, opts = {}) {
   project.files = files;
   if (!opts.keepCollapsed) project.collapsed.clear();
   activePath = null;
+  watch(root);
 
   const target =
     preferredActive && files.some((f) => f.path === preferredActive) ? preferredActive : initial;
@@ -660,7 +682,7 @@ async function ensureBuffer(path) {
     lineNumbers: settings.lineNumbers,
     tabSize: settings.tabSize,
   });
-  const buf = { state, dirty: false };
+  const buf = { state, dirty: false, diskText: content };
   buffers.set(path, buf);
   return buf;
 }
@@ -711,11 +733,13 @@ async function openFile() {
       lineNumbers: settings.lineNumbers,
       tabSize: settings.tabSize,
     });
-    const buf = { state, dirty: false };
+    const buf = { state, dirty: false, diskText: content };
     buffers.set(path, buf);
     view.setState(buf.state);
     activePath = path;
     dirty = false;
+    // A lone file's imports resolve from its folder, so that's what to watch.
+    watch(dirName(path));
     pageHashByIndex = [];
     previewEl.innerHTML = "";
     syncByFile.set(syncKey(), {
@@ -750,6 +774,11 @@ async function saveFile() {
 
 async function writeCurrent(path) {
   const content = getDocText(view);
+  const buf = buffers.get(path) || { state: view.state, dirty: false };
+  // Recorded before writing, so the watcher never takes this save for an
+  // outside edit.
+  const previousDiskText = buf.diskText;
+  buf.diskText = content;
   try {
     await invoke("write_file_text", { path, content });
     const wasNew = activePath !== path;
@@ -758,19 +787,20 @@ async function writeCurrent(path) {
     // otherwise we'd silently mark unsaved changes as saved.
     const stillUnchanged = getDocText(view) === content;
     if (stillUnchanged) dirty = false;
-    const buf = buffers.get(path) || { state: view.state, dirty: false };
     if (stillUnchanged) buf.dirty = false;
     buffers.set(path, buf);
     if (wasNew && project.root) {
       // Refresh tree if the file was saved into the project.
       await refreshProjectFiles();
     } else {
+      if (wasNew) watch(dirName(path));
       renderFileTree();
     }
     updateStatus(`Saved ${fileName(path)}`);
     setTimeout(updateStatus, 1500);
     triggerCompile();
   } catch (e) {
+    buf.diskText = previousDiskText;
     setError("Save failed: " + e);
   }
 }
@@ -817,6 +847,8 @@ async function autosaveBuffer(path) {
     return;
   }
   autosaveInFlight.add(path);
+  const previousDiskText = buf.diskText;
+  buf.diskText = content; // before writing; see writeCurrent
   try {
     await invoke("write_file_text", { path, content });
     const buf2 = buffers.get(path);
@@ -833,6 +865,7 @@ async function autosaveBuffer(path) {
     }
     renderFileTree();
   } catch (e) {
+    buf.diskText = previousDiskText;
     console.warn("autosave failed:", e);
   } finally {
     autosaveInFlight.delete(path);
@@ -842,6 +875,103 @@ async function autosaveBuffer(path) {
     }
   }
 }
+
+/* =====================================================================
+   Outside changes
+   --------------------------------------------------------------------- */
+
+// Files changed by another editor, git or a script. Open files take the new
+// content (after asking, if they have unsaved edits), and the preview
+// recompiles since the document may import what changed.
+
+// The smallest single edit turning `a` into `b`, so a reload leaves the cursor
+// and undo history alone outside the part that changed. Never splits a
+// surrogate pair.
+function diffText(a, b) {
+  const isLow = (s, i) => (s.charCodeAt(i) & 0xfc00) === 0xdc00;
+  let from = 0;
+  const max = Math.min(a.length, b.length);
+  while (from < max && a.charCodeAt(from) === b.charCodeAt(from)) from++;
+  if (from > 0 && (isLow(a, from) || isLow(b, from))) from--;
+  let endA = a.length;
+  let endB = b.length;
+  while (endA > from && endB > from && a.charCodeAt(endA - 1) === b.charCodeAt(endB - 1)) {
+    endA--;
+    endB--;
+  }
+  if (endA < a.length && isLow(a, endA)) {
+    endA++;
+    endB++;
+  }
+  return { from, to: endA, insert: b.slice(from, endB) };
+}
+
+async function reloadBuffer(path) {
+  const buf = buffers.get(path);
+  if (!buf) return;
+  let disk;
+  try {
+    disk = await invoke("read_file_text", { path });
+  } catch {
+    return; // Deleted, or caught mid-save; the buffer stays as it is.
+  }
+  // Our own save, or a touch that changed nothing.
+  if (disk === buf.diskText || buffers.get(path) !== buf) return;
+  buf.diskText = disk;
+  const text = disk.replace(/\r\n?/g, "\n"); // CodeMirror's line breaks
+  const docText = () => (path === activePath ? getDocText(view) : buf.state.doc.toString());
+  if (docText() === text) return;
+
+  if (path === activePath ? dirty : buf.dirty) {
+    // Hold autosave while asking, or it would write the edits over the file.
+    cancelAutosave();
+    const reload = await ask({
+      message: `${fileName(path)} changed on disk.`,
+      detail: "It also has edits in Galley that aren't saved yet.",
+      confirm: "Reload from Disk",
+      cancel: "Keep My Edits",
+    });
+    if (buffers.get(path) !== buf) return;
+    if (!reload) {
+      // Saving them will replace the file.
+      if (path === activePath) scheduleAutosave();
+      return;
+    }
+  }
+
+  const changes = diffText(docText(), text);
+  if (path === activePath) {
+    view.dispatch({ changes, annotations: fromDisk.of(true) });
+    dirty = false;
+  } else {
+    const tr = buf.state.update({ changes, annotations: fromDisk.of(true) });
+    buf.state = tr.state;
+    // The engine still has this file's last compiled text; hand it the edit
+    // with the next compile, as if it had been typed.
+    const sync = syncByFile.get(path);
+    if (sync) sync.pending = sync.pending.compose(tr.changes);
+  }
+  buf.dirty = false;
+  updateStatus();
+  renderFileTree();
+}
+
+async function applyOutsideChanges({ paths, restructured }) {
+  for (const path of paths) await reloadBuffer(path);
+  if (restructured) await refreshProjectFiles();
+  // The open file compiles from the editor (reloading it already did), but
+  // any other file may be something it imports.
+  if (paths.some((p) => p !== activePath)) triggerCompile();
+}
+
+// One batch at a time, so a question about one file can't interleave with the
+// next batch.
+let outsideChanges = Promise.resolve();
+onFilesChanged((change) => {
+  outsideChanges = outsideChanges
+    .then(() => applyOutsideChanges(change))
+    .catch((e) => console.warn("applying outside changes failed:", e));
+});
 
 async function newProjectFile() {
   if (!project.root) return;

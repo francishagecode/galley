@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld("galley", {
   },
   open: (options) => ipcRenderer.invoke("galley:open", options),
   save: (options) => ipcRenderer.invoke("galley:save", options),
+  ask: (options) => ipcRenderer.invoke("galley:ask", options),
+  watch: (root) => ipcRenderer.invoke("galley:watch", root),
+  onFilesChanged: (callback) =>
+    ipcRenderer.on("galley:files-changed", (_event, change) => callback(change)),
   takeLaunchTarget: () => ipcRenderer.invoke("galley:take-launch-target"),
   onOpenRequest: (callback) => ipcRenderer.on("galley:open", (_event, target) => callback(target)),
 });
